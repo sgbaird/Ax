@@ -6,7 +6,8 @@ This directory contains a standalone implementation of hypervolume calculation e
 
 - `hypervolume.py` - Main implementation with all hypervolume functions
 - `tests/test_hypervolume.py` - Comprehensive test suite
-- `../examples/standalone_hypervolume_usage.py` - Usage examples
+- `../examples/standalone_hypervolume_usage.py` - Usage examples with our implementation
+- `../examples/pymoo_hypervolume_example.py` - Alternative implementation using pymoo's algorithm
 
 ## Quick Start
 
@@ -84,3 +85,8 @@ The implementation has been validated against:
 - Pareto frontier quality assessment
 - Optimization progress tracking
 - Multi-criteria decision making
+
+## Alternative Implementations
+
+For comparison and different algorithmic approaches, see:
+- `../examples/pymoo_hypervolume_example.py` - Implementation based on the Fonseca-Paquete-Lopez-Ibanez dimension-sweep algorithm (extracted from pymoo)
