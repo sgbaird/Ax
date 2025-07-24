@@ -2,17 +2,17 @@
 """
 Ax-based Implementation: Using DeterministicModel with Mixed Optimization
 
-This script demonstrates how to use DeterministicModel concepts in Ax for optimization 
-problems where some objectives or constraints are analytically known.
+This script demonstrates how to use AxClient with mixed analytical/black-box optimization 
+where some objectives or constraints are analytically known.
 
-Addresses GitHub issues #935 and #1192 in facebook/Ax repository using Ax's high-level API.
+Addresses GitHub issues #935 and #1192 in facebook/Ax repository.
 
 Author: Generated for Ax tutorial
 """
 
 import torch
 import numpy as np
-from typing import Callable, Dict, Any, List, Tuple
+from typing import Dict, Any, Tuple
 
 # Set random seeds for reproducibility
 torch.manual_seed(42)
@@ -36,266 +36,293 @@ def constraint_function(x: float, y: float) -> float:
     return float(x + y - 0.8 + 0.05 * np.random.randn())
 
 
-def demonstrate_ax_style_approach():
-    """Demonstrate Ax-style approach for mixed optimization using simple evaluate function."""
+def evaluation_function(parameterization: Dict[str, Any]) -> Dict[str, Tuple[float, float]]:
+    """
+    Evaluation function for Ax optimization.
+    Returns a dictionary with metrics and their (mean, sem) values.
     
-    print("=" * 60)
-    print("Ax-Style DeterministicModel Example (Simple Approach)")
-    print("=" * 60)
+    The key insight for DeterministicModel usage:
+    - Analytical functions return (value, 0.0) indicating zero uncertainty
+    - Black-box functions return (value, sem) with appropriate uncertainty
+    """
+    x = parameterization["x"]
+    y = parameterization["y"]
     
-    print("\nThis example shows the conceptual approach for using Ax with mixed")
-    print("analytical and black-box functions. In a full implementation, you would:")
-    print("1. Create custom Metric classes for analytical functions")
-    print("2. Use Ax's optimization loops with mixed metric types")
-    print("3. Let Ax handle the optimization automatically")
+    return {
+        "cost": (analytical_cost_function(x, y), 0.0),  # Analytical - zero uncertainty
+        "performance": (black_box_performance(x, y), 0.05),  # Black-box with uncertainty  
+        "constraint": (constraint_function(x, y), 0.02),  # Black-box with uncertainty
+    }
+
+
+def run_optimization_simple() -> None:
+    """Run mixed analytical/black-box optimization using simple Ax API."""
     
-    # Step 1: Define evaluation function that Ax would use
-    def mixed_evaluation_function(parameterization: Dict[str, float]) -> Dict[str, Tuple[float, float]]:
-        """Evaluation function for Ax optimization."""
-        x = parameterization["x"]
-        y = parameterization["y"]
+    print("Mixed Analytical/Black-box Optimization using AxClient")
+    print("=" * 65)
+    
+    try:
+        # Try to import AxClient
+        from ax.service.ax_client import AxClient, ObjectiveProperties
         
-        return {
-            "cost": (analytical_cost_function(x, y), 0.0),  # Exact, no uncertainty
-            "performance": (black_box_performance(x, y), 0.05),  # With uncertainty
-            "constraint": (constraint_function(x, y), 0.02),  # With uncertainty
-        }
-    
-    print("\n1. Evaluation Function Structure:")
-    print("   def mixed_evaluation_function(parameterization):")
-    print("       x, y = parameterization['x'], parameterization['y']")
-    print("       return {")
-    print("           'cost': (analytical_cost_function(x, y), 0.0),  # Exact")
-    print("           'performance': (black_box_performance(x, y), 0.05),  # Uncertain")
-    print("           'constraint': (constraint_function(x, y), 0.02),  # Uncertain")
-    print("       }")
-    
-    # Step 2: Simulate optimization trials
-    print("\n2. Simulated Optimization Results:")
-    print(f"   {'Trial':<6} {'x':<8} {'y':<8} {'Cost':<10} {'Performance':<12} {'Constraint':<12}")
-    print("   " + "-" * 62)
-    
-    # Generate some trial points
-    trial_points = [
-        {"x": 0.2, "y": 0.3},
-        {"x": 0.4, "y": 0.2},
-        {"x": 0.3, "y": 0.3},
-        {"x": 0.1, "y": 0.4},
-        {"x": 0.35, "y": 0.25},
-    ]
-    
-    results = []
-    for i, params in enumerate(trial_points):
-        metrics = mixed_evaluation_function(params)
-        results.append((params, metrics))
+        # Create AxClient for optimization
+        ax_client = AxClient()
         
-        cost_val = metrics["cost"][0]
-        perf_val = metrics["performance"][0]
-        const_val = metrics["constraint"][0]
+        ax_client.create_experiment(
+            name="deterministic_model_optimization",
+            parameters=[
+                {"name": "x", "type": "range", "bounds": [0.0, 1.0]},
+                {"name": "y", "type": "range", "bounds": [0.0, 1.0]},
+            ],
+            objectives={
+                "performance": ObjectiveProperties(minimize=False),  # Maximize performance
+            },
+            outcome_constraints=[
+                "constraint <= 0",  # Constraint must be <= 0
+            ],
+            tracking_metrics=["cost"],  # Track cost but don't optimize it directly
+        )
         
-        print(f"   {i+1:<6} {params['x']:<8.2f} {params['y']:<8.2f} {cost_val:<10.6f} {perf_val:<12.4f} {const_val:<12.4f}")
+        print(f"{'Trial':<6} {'x':<8} {'y':<8} {'Cost':<10} {'Performance':<12} {'Constraint':<12}")
+        print("-" * 65)
+        
+        best_trial = None
+        best_performance = float('-inf')
+        
+        # Run optimization trials
+        for trial_idx in range(15):
+            # Get next trial parameters
+            parameterization, trial_index = ax_client.get_next_trial()
+            
+            # Evaluate the trial
+            results = evaluation_function(parameterization)
+            
+            # Complete the trial with results
+            ax_client.complete_trial(trial_index=trial_index, raw_data=results)
+            
+            # Extract values for display
+            x = parameterization["x"]
+            y = parameterization["y"] 
+            cost = results["cost"][0]
+            performance = results["performance"][0]
+            constraint = results["constraint"][0]
+            
+            print(f"{trial_idx+1:<6} {x:<8.3f} {y:<8.3f} {cost:<10.4f} {performance:<12.4f} {constraint:<12.4f}")
+            
+            # Track best feasible trial
+            if constraint <= 0 and performance > best_performance:
+                best_performance = performance
+                best_trial = {
+                    "trial": trial_idx + 1,
+                    "params": parameterization,
+                    "metrics": results
+                }
+        
+        # Display results
+        print("\nOptimization Results:")
+        print("=" * 40)
+        
+        if best_trial:
+            print(f"Best feasible trial: #{best_trial['trial']}")
+            print(f"  Parameters: x={best_trial['params']['x']:.4f}, y={best_trial['params']['y']:.4f}")
+            print(f"  Cost (analytical): {best_trial['metrics']['cost'][0]:.6f}")
+            print(f"  Performance: {best_trial['metrics']['performance'][0]:.4f}")
+            print(f"  Constraint: {best_trial['metrics']['constraint'][0]:.4f}")
+        else:
+            print("No feasible trials found.")
+        
+        # Get best point from model
+        try:
+            best_params, best_values = ax_client.get_best_point()
+            print(f"\nModel-predicted best point:")
+            print(f"  Parameters: {best_params}")
+            print(f"  Predicted values: {best_values}")
+        except Exception as e:
+            print(f"Could not get model prediction: {e}")
+
+        print("\nKey Insights:")
+        print("✓ Analytical functions specified with zero uncertainty (0.0 SEM)")
+        print("✓ Black-box functions include appropriate uncertainty estimates") 
+        print("✓ AxClient handles mixed uncertainty types automatically")
+        print("✓ Cost function computed exactly, no surrogate model needed")
+        
+        return True
+        
+    except ImportError as e:
+        print(f"Could not import Ax components: {e}")
+        return False
+
+
+def demonstrate_direct_deterministic_model():
+    """
+    Demonstrate how to use DeterministicModel directly.
     
-    # Step 3: Analysis
-    print("\n3. Analysis:")
+    This shows the core DeterministicModel concepts that would be integrated
+    into Ax workflows through custom generation strategies.
+    """
     
-    # Find best feasible point (constraint <= 0)
-    feasible_results = [(params, metrics) for params, metrics in results if metrics["constraint"][0] <= 0]
+    try:
+        # Import BoTorch models
+        from botorch.models.deterministic import GenericDeterministicModel
+        from botorch.models.model import ModelList
+        from botorch.models import SingleTaskGP
+        
+        print("\nDemonstrating Direct DeterministicModel Integration:")
+        print("=" * 55)
+        
+        # Create a torch version of analytical function
+        def torch_analytical_cost(X: torch.Tensor) -> torch.Tensor:
+            """Convert analytical cost to torch tensor format."""
+            return (X**2).sum(dim=-1, keepdim=True)
+        
+        # Test the DeterministicModel directly
+        det_model = GenericDeterministicModel(f=torch_analytical_cost)
+        
+        # Test with sample input
+        test_input = torch.tensor([[0.3, 0.4]])
+        analytical_result = torch_analytical_cost(test_input)
+        model_result = det_model(test_input)
+        
+        print(f"Direct function:      {analytical_result.item():.6f}")
+        print(f"DeterministicModel:   {model_result.item():.6f}") 
+        print(f"Results match:        {torch.allclose(analytical_result, model_result)}")
+        
+        # Demonstrate ModelList integration
+        print(f"\nDemonstrating ModelList with DeterministicModel:")
+        
+        # Create some dummy data for GP models
+        X_dummy = torch.tensor([[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]])
+        Y_performance = torch.tensor([[0.1], [0.3], [0.2]])  
+        Y_constraint = torch.tensor([[-0.1], [0.05], [-0.2]])
+        
+        # Create models
+        performance_gp = SingleTaskGP(X_dummy, Y_performance)
+        constraint_gp = SingleTaskGP(X_dummy, Y_constraint)
+        
+        # Create ModelList combining deterministic and probabilistic models
+        mixed_model = ModelList(
+            det_model,        # Model 0: Analytical cost (deterministic)
+            performance_gp,   # Model 1: Performance (probabilistic)
+            constraint_gp     # Model 2: Constraint (probabilistic)
+        )
+        
+        print(f"Created ModelList with {len(mixed_model.models)} sub-models:")
+        for i, model in enumerate(mixed_model.models):
+            print(f"  Model {i}: {type(model).__name__}")
+        
+        # Test mixed model evaluation
+        test_points = torch.tensor([[0.2, 0.3], [0.5, 0.4]])
+        
+        print(f"\nTesting mixed model on sample points:")
+        print(f"{'Point':<15} {'Cost':<10} {'Perf Mean':<10} {'Perf Std':<10} {'Const Mean':<10} {'Const Std':<10}")
+        print("-" * 70)
+        
+        for i, point in enumerate(test_points):
+            point_tensor = point.unsqueeze(0)  # Add batch dimension
+            
+            # Evaluate with mixed model
+            cost_output = mixed_model.models[0](point_tensor)
+            performance_output = mixed_model.models[1].posterior(point_tensor)
+            constraint_output = mixed_model.models[2].posterior(point_tensor)
+            
+            point_str = f"({point[0]:.1f}, {point[1]:.1f})"
+            cost_val = cost_output.item()
+            perf_mean = performance_output.mean.item()
+            perf_std = performance_output.variance.sqrt().item()
+            const_mean = constraint_output.mean.item()
+            const_std = constraint_output.variance.sqrt().item()
+            
+            print(f"{point_str:<15} {cost_val:<10.4f} {perf_mean:<10.4f} {perf_std:<10.4f} {const_mean:<10.4f} {const_std:<10.4f}")
+        
+        print(f"\nKey Benefits of DeterministicModel:")
+        print("✓ Zero approximation error for analytical functions")
+        print("✓ No training data needed for known functions") 
+        print("✓ Perfect predictions without uncertainty")
+        print("✓ Can be combined with GP models in ModelList")
+        
+        print(f"\nIntegration with Ax:")
+        print("• Use custom generation strategies with ModelList")
+        print("• Specify analytical functions with zero uncertainty in evaluation")
+        print("• Combine exact and approximate models seamlessly")
+        
+        return True
+        
+    except ImportError as e:
+        print(f"Could not import BoTorch components: {e}")
+        return False
+
+
+def run_manual_optimization():
+    """Fallback manual optimization if Ax imports fail."""
     
-    if feasible_results:
-        best_params, best_metrics = max(feasible_results, key=lambda x: x[1]["performance"][0])
-        print(f"   Best feasible point: x={best_params['x']:.3f}, y={best_params['y']:.3f}")
-        print(f"   Cost (analytical): {best_metrics['cost'][0]:.6f}")
-        print(f"   Performance: {best_metrics['performance'][0]:.4f}")
-        print(f"   Constraint: {best_metrics['constraint'][0]:.4f}")
+    print("Manual Optimization (Fallback Implementation)")
+    print("=" * 50)
+    print("Running manual optimization to demonstrate concepts...")
+    
+    print(f"{'Trial':<6} {'x':<8} {'y':<8} {'Cost':<10} {'Performance':<12} {'Constraint':<12}")
+    print("-" * 65)
+    
+    best_trial = None
+    best_performance = float('-inf')
+    
+    # Simple grid search + random sampling
+    for trial_idx in range(15):
+        # Generate random parameters
+        x = np.random.uniform(0.0, 1.0)
+        y = np.random.uniform(0.0, 1.0)
+        
+        parameterization = {"x": x, "y": y}
+        results = evaluation_function(parameterization)
+        
+        cost = results["cost"][0]
+        performance = results["performance"][0]
+        constraint = results["constraint"][0]
+        
+        print(f"{trial_idx+1:<6} {x:<8.3f} {y:<8.3f} {cost:<10.4f} {performance:<12.4f} {constraint:<12.4f}")
+        
+        # Track best feasible trial
+        if constraint <= 0 and performance > best_performance:
+            best_performance = performance
+            best_trial = {
+                "trial": trial_idx + 1,
+                "params": parameterization,
+                "metrics": results
+            }
+    
+    print("\nOptimization Results:")
+    print("=" * 40)
+    
+    if best_trial:
+        print(f"Best feasible trial: #{best_trial['trial']}")
+        print(f"  Parameters: x={best_trial['params']['x']:.4f}, y={best_trial['params']['y']:.4f}")
+        print(f"  Cost (analytical): {best_trial['metrics']['cost'][0]:.6f}")
+        print(f"  Performance: {best_trial['metrics']['performance'][0]:.4f}")
+        print(f"  Constraint: {best_trial['metrics']['constraint'][0]:.4f}")
     else:
-        print("   No feasible points found in this simulation")
-    
-    # Step 4: Key benefits
-    print("\n4. Key Benefits of This Approach:")
-    print("   ✓ Analytical cost function computed exactly (zero error)")
-    print("   ✓ No surrogate model needed for known functions")
-    print("   ✓ Uncertainty correctly specified for each metric type")
-    print("   ✓ Ready for integration with Ax's optimization algorithms")
-    
-    return results
-
-
-def demonstrate_advanced_ax_concepts():
-    """Demonstrate advanced Ax concepts for DeterministicModel integration."""
-    
-    print("\n" + "=" * 60)
-    print("Advanced Ax Integration Concepts")
-    print("=" * 60)
-    
-    print("\n1. **Custom Metric Classes**:")
-    print("   ```python")
-    print("   from ax.core.metric import Metric")
-    print("   from ax.core.data import Data")
-    print("   ")
-    print("   class AnalyticalCostMetric(Metric):")
-    print("       def fetch_trial_data(self, trial, **kwargs):")
-    print("           # Compute analytical function directly")
-    print("           arm = trial.arm")
-    print("           x, y = arm.parameters['x'], arm.parameters['y']")
-    print("           cost = x**2 + y**2  # Analytical function")
-    print("           return Data([{")
-    print("               'arm_name': arm.name,")
-    print("               'metric_name': self.name,")
-    print("               'mean': cost,")
-    print("               'sem': 0.0,  # Zero uncertainty for deterministic")
-    print("           }])")
-    print("   ```")
-    
-    print("\n2. **Experiment Setup**:")
-    print("   ```python")
-    print("   from ax.core.experiment import Experiment")
-    print("   from ax.core.optimization_config import OptimizationConfig")
-    print("   from ax.core.objective import Objective")
-    print("   ")
-    print("   experiment = Experiment(")
-    print("       name='mixed_optimization',")
-    print("       search_space=search_space,")
-    print("       optimization_config=OptimizationConfig(")
-    print("           objective=Objective(performance_metric, minimize=False),")
-    print("           outcome_constraints=[constraint_metric <= 0],")
-    print("       ),")
-    print("       tracking_metrics=[cost_metric],  # Track but don't optimize")
-    print("   )")
-    print("   ```")
-    
-    print("\n3. **Generation Strategy**:")
-    print("   ```python")
-    print("   from ax.modelbridge.dispatch_utils import choose_generation_strategy")
-    print("   ")
-    print("   generation_strategy = choose_generation_strategy(")
-    print("       search_space=experiment.search_space,")
-    print("       optimization_config=experiment.optimization_config,")
-    print("   )")
-    print("   ```")
-    
-    print("\n4. **Optimization Loop**:")
-    print("   ```python")
-    print("   for i in range(num_trials):")
-    print("       trial = experiment.new_trial(")
-    print("           generator_run=generation_strategy.gen(experiment)")
-    print("       )")
-    print("       trial.run().mark_completed()")
-    print("       data = experiment.fetch_data()")
-    print("       generation_strategy.gen(experiment, new_data=data)")
-    print("   ```")
-    
-    print("\n5. **Alternative: Simple Optimization Function**:")
-    print("   ```python")
-    print("   from ax.service.managed_loop import optimize")
-    print("   ")
-    print("   best_parameters, values, experiment, model = optimize(")
-    print("       parameters=[")
-    print("           {'name': 'x', 'type': 'range', 'bounds': [0.0, 1.0]},")
-    print("           {'name': 'y', 'type': 'range', 'bounds': [0.0, 1.0]},")
-    print("       ],")
-    print("       evaluation_function=mixed_evaluation_function,")
-    print("       minimize=False,  # Maximize performance")
-    print("       total_trials=20,")
-    print("   )")
-    print("   ```")
-
-
-def compare_approaches():
-    """Compare different approaches for handling analytical functions."""
-    
-    print("\n" + "=" * 60)
-    print("Approach Comparison")
-    print("=" * 60)
-    
-    approaches = [
-        {
-            "name": "Ax with Custom Metrics",
-            "complexity": "Low",
-            "deterministic_support": "Indirect",
-            "integration": "Native",
-            "use_case": "Production systems",
-            "pros": ["Easy implementation", "Full Ax features", "Automatic optimization"],
-            "cons": ["No direct DeterministicModel", "Less explicit"],
-        },
-        {
-            "name": "Ax with Custom Surrogate",
-            "complexity": "High", 
-            "deterministic_support": "Direct",
-            "integration": "Manual",
-            "use_case": "Advanced research",
-            "pros": ["Direct DeterministicModel", "Full control", "Explicit modeling"],
-            "cons": ["Complex implementation", "Requires Ax internals knowledge"],
-        },
-        {
-            "name": "Pure BoTorch",
-            "complexity": "Medium",
-            "deterministic_support": "Direct",
-            "integration": "Manual",
-            "use_case": "Research & prototyping",
-            "pros": ["Direct model access", "Clear concepts", "Flexible"],
-            "cons": ["Manual optimization loop", "No high-level features"],
-        },
-    ]
-    
-    print(f"\n{'Approach':<25} {'Complexity':<12} {'Det.Model':<12} {'Integration':<12} {'Use Case':<20}")
-    print("-" * 85)
-    
-    for approach in approaches:
-        print(f"{approach['name']:<25} {approach['complexity']:<12} {approach['deterministic_support']:<12} {approach['integration']:<12} {approach['use_case']:<20}")
-    
-    print("\n**Recommendations:**")
-    print("1. **Start with Ax Custom Metrics** - easiest and most practical")
-    print("2. **Use BoTorch directly** - for understanding concepts")
-    print("3. **Consider Custom Surrogate** - only for advanced needs")
+        print("No feasible trials found.")
 
 
 def main():
     """Main demonstration function."""
     
-    print("Welcome to the Ax-based DeterministicModel Tutorial!")
-    print("This tutorial demonstrates how to handle mixed analytical/black-box optimization")
-    print("using Ax-compatible patterns.")
+    print("Ax-based DeterministicModel Example")
+    print("This tutorial shows how to use Ax with mixed analytical/black-box optimization.\n")
     
-    # Demonstrate the simple approach
-    results = demonstrate_ax_style_approach()
+    # Try to run with AxClient
+    success = run_optimization_simple()
     
-    # Show advanced concepts
-    demonstrate_advanced_ax_concepts()
+    if not success:
+        print("\nFalling back to manual optimization...")
+        run_manual_optimization()
     
-    # Compare approaches
-    compare_approaches()
+    # Show direct DeterministicModel concepts
+    print("\n" + "="*70)
+    demonstrate_direct_deterministic_model()
     
-    print("\n" + "=" * 60)
-    print("Summary and Next Steps")
-    print("=" * 60)
-    
-    print("\n**What We Demonstrated:**")
-    print("✓ Evaluation function structure for mixed optimization")
-    print("✓ Handling analytical functions with zero uncertainty")
-    print("✓ Conceptual Ax integration patterns")
-    print("✓ Comparison of different implementation approaches")
-    
-    print("\n**Key Insights:**")
-    print("1. **Analytical functions** should return (value, 0.0) to indicate no uncertainty")
-    print("2. **Black-box functions** should return (value, sem) with appropriate uncertainty")
-    print("3. **Ax handles mixed types** automatically when structured properly")
-    print("4. **Custom Metric classes** provide the most flexible integration")
-    
-    print("\n**Next Steps:**")
-    print("1. Implement custom Metric classes for your analytical functions")
-    print("2. Create an Ax experiment with your specific search space")
-    print("3. Use Ax's generation strategies for efficient optimization")
-    print("4. Refer to the BoTorch example (minimal_example.py) for core concepts")
-    
-    print("\n**Files to Study:**")
-    print("- `ax_deterministic_example.py`: This file (Ax concepts and patterns)")
-    print("- `minimal_example.py`: BoTorch implementation (core DeterministicModel usage)")
-    print("- `README.md`: Complete documentation and usage guidance")
-    
-    print("\n" + "=" * 60)
-    print("Tutorial completed successfully!")
-    print("For a working BoTorch example, run: python minimal_example.py")
-    print("=" * 60)
+    print("\nNext Steps:")
+    print("1. For more complex DeterministicModel integration, see minimal_example.py")
+    print("2. For production use, consider custom generation strategies with ModelList")
+    print("3. The evaluation function approach shown here works for most use cases")
 
 
 if __name__ == "__main__":
