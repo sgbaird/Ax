@@ -60,6 +60,7 @@ export default {
       collapsed: false,
       items: [
         'recipes/attach-trial',
+        'recipes/categorical-parameters',
         'recipes/existing-data',
         'recipes/tracking-metrics',
         'recipes/experiment-to-json',
