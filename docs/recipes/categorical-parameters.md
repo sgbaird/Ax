@@ -182,6 +182,84 @@ if len(search_space_digest.categorical_features) > 0:
 
 However, with continuous relaxation via one-hot encoding, the model is typically `SingleTaskGP` treating the parameters as continuous.
 
+## Understanding the Categorical Kernel (Hamming Distance)
+
+When `MixedSingleTaskGP` is used, BoTorch employs a **product kernel** that combines different kernel types for different parameter types:
+
+### Kernel Structure
+
+The `MixedSingleTaskGP` model uses a composite kernel structure:
+
+1. **Continuous Parameters**: Standard kernel (e.g., Matérn or RBF) for continuous/ordinal dimensions
+2. **Categorical Parameters**: Hamming distance-based kernel for categorical dimensions
+3. **Product Kernel**: The overall covariance is the product of these kernels
+
+### Hamming Distance Kernel
+
+The Hamming distance kernel measures similarity between categorical values:
+
+- **Same category** (distance = 0): High covariance (values are considered similar)
+- **Different category** (distance = 1): Low covariance (values are considered dissimilar)
+
+**Mathematical form:**
+```
+k_categorical(x, x') = exp(-d_H(x, x'))
+```
+
+Where `d_H(x, x')` is the Hamming distance:
+- `d_H(x, x') = 0` if x and x' have the same categorical value
+- `d_H(x, x') = 1` if x and x' have different categorical values
+
+### Why Hamming Distance is Better Than One-Hot
+
+**One-hot encoding problems:**
+- Creates artificial geometric relationships between unrelated categories
+- Increases dimensionality unnecessarily
+- Treats the continuous relaxation of discrete variables as meaningful
+
+**Hamming distance advantages:**
+- Respects the discrete, unordered nature of categorical variables
+- No artificial geometric structure imposed
+- More statistically principled for Gaussian Process modeling
+- Better handles the correlation structure of categorical parameters
+
+### Implementation Details
+
+From the test code in [`ax/generators/torch/tests/test_surrogate.py`](https://github.com/sgbaird/Ax/blob/copilot/analyze-categorical-parameters/ax/generators/torch/tests/test_surrogate.py#L1731-L1760), we can see:
+
+```python
+# When categorical_features=[0] is specified:
+surrogate.model.covar_module.kernels[0].base_kernel.kernels[1].active_dims  # [0] - categorical
+surrogate.model.covar_module.kernels[0].base_kernel.kernels[0].active_dims  # [1,2] - continuous
+```
+
+This shows the kernel is split:
+- One kernel component operates on categorical dimensions (e.g., dimension 0)
+- Another kernel component operates on continuous dimensions (e.g., dimensions 1, 2)
+- These are combined via a product kernel
+
+### Example: How It Works
+
+Consider a parameter with 3 categories: ["method_a", "method_b", "method_c"]
+
+**After ChoiceToNumericChoice transform:** `[0, 1, 2]`
+
+**Kernel evaluation:**
+- `k_cat(0, 0) = exp(0) = 1.0` (same method)
+- `k_cat(0, 1) = exp(-1) ≈ 0.37` (different methods)
+- `k_cat(1, 2) = exp(-1) ≈ 0.37` (different methods)
+
+The model learns that observations with the same categorical value are highly correlated, while different categorical values have reduced (but non-zero) correlation.
+
+### BoTorch Implementation
+
+The actual implementation is in BoTorch's [`MixedSingleTaskGP`](https://github.com/pytorch/botorch/blob/main/botorch/models/gp_regression_mixed.py) class, which:
+
+1. Accepts `categorical_features` as a list of dimension indices
+2. Constructs separate kernel components for categorical vs. continuous dimensions
+3. Uses `active_dims` to specify which dimensions each kernel operates on
+4. Combines kernels via multiplication to get the final covariance function
+
 ## Multi-Task Learning
 
 Categorical parameters can also be used as **task parameters** for multi-task learning. Task parameters are a special type of categorical parameter where:
